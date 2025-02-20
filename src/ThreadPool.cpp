@@ -1,7 +1,9 @@
 #include "ThreadPool.h"
+#include <iostream>
 
 ThreadPool::ThreadPool(size_t numThreads) : stop(false)
 {
+    std::cerr << "Starting " << numThreads << " threads" << std::endl;
     for (size_t i = 0; i < numThreads; ++i) {
         workers.emplace_back(
             [this] {

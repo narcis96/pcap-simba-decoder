@@ -9,9 +9,6 @@
 
 namespace parser {
 
-// PCAP Magic Numbers
-constexpr uint32_t PCAP_MAGIC_NUMBER = 0xA1B2C3D4;
-constexpr uint32_t PCAP_MAGIC_NUMBER_SWAPPED = 0xA1B23C4D;
 constexpr size_t ETHERNET_HEADER_SIZE = 14;
 constexpr size_t UDP_HEADER_SIZE = 8;
 constexpr size_t IP_V4_BASE_HEADER_SIZE = 20;
@@ -46,11 +43,12 @@ public:
 
     // Reads the next packet's data into the provided vector.
     // Returns true if a packet was successfully read, false otherwise.
-    bool readNextPacket(std::vector<uint8_t>& packetData);
+    bool readNextPacket(std::vector<uint8_t>&packetData);
 
 private:
     std::ifstream file_;
     PcapGlobalHeader header_;
+    std::vector<uint8_t>buffer_;
 };
 
 } // namespace parser

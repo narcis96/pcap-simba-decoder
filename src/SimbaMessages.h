@@ -11,6 +11,8 @@ namespace simba {
 
 static constexpr size_t INCREMENTAL_PACKET_HEADER_SIZE = 12;
 
+using PacketData = std::vector<uint8_t>;
+
 #pragma pack(push, 1) // Ensures structures are packed with no padding
 
 // Structure for decimal values with a fixed exponent

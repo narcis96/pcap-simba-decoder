@@ -1,11 +1,40 @@
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <map>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
 #include <chrono>
 #include <future>
+#include <thread>
 #include "PcapParser.h"
 #include "SimbaDecoder.h"
+#include "SafeVector.h"
 #include "ThreadPool.h"
+
+// More threads can lead to increased competition for the CPU cache. 
+// Because the working set size is large, running more threads might cause cache thrashing, which slows down execution.
+const unsigned int MAX_THREADS = 4;
+const unsigned int EXPECTED_NUMBER_OF_PACKETS = 50000;
+
+void writerThread(const std::string& outputFileName, SafeVector<std::future<std::string>> &futures) {
+    std::ofstream outFile(outputFileName);
+    if (!outFile.is_open()) {
+        std::cerr << "Error: Could not open output file." << std::endl;
+        return;
+    }
+    std::future<std::string> future;
+    while (true) {
+        if (!futures.pop(future))  {
+            break;
+        }
+        if (std::string jsonOutput = future.get(); !jsonOutput.empty()) {
+            outFile << jsonOutput << "\n";
+        }
+    }
+}
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -16,70 +45,42 @@ int main(int argc, char* argv[]) {
     const std::string pcapFileName = argv[1];
     const std::string outputFileName = argv[2];
     
-    std::ofstream outFile(outputFileName);
-    if (!outFile.is_open()) {
-        std::cerr << "Error: Could not open output file." << std::endl;
-        return EXIT_FAILURE;
-    }
-    
-    // Create a thread pool using the number of hardware threads available.
-    ThreadPool pool(std::thread::hardware_concurrency());
-    std::vector<std::future<std::string>> futures;
+    ThreadPool pool(std::min(MAX_THREADS, std::thread::hardware_concurrency()));
+    SafeVector<std::future<std::string>> futures(EXPECTED_NUMBER_OF_PACKETS);
+    std::thread writer(writerThread, std::cref(outputFileName), std::ref(futures));
 
     auto start = std::chrono::steady_clock::now();
-
     try {
+
         parser::PcapParser parser(pcapFileName);
         if (!parser.readGlobalHeader()) {
             return EXIT_FAILURE;
         }
+        
         // Enqueue a decoding task for each packet read.
         for (std::vector<uint8_t> packetData; parser.readNextPacket(packetData); ) {
-            futures.emplace_back(
+            futures.push(
                 pool.enqueue([packetData]() -> std::string {
-                    simba::SimbaDecoder decoder(packetData);
+                    simba::SimbaDecoder decoder(std::move(packetData));
                     if (!decoder.Decode()) {
-                        // std::cerr << "Failed to decode one packet" << std::endl;
                         return std::string{};
                     }
                     return decoder.GetDecodedMessages().toJSON();
                 })
             );
         }
+        futures.setDone();
+
     } catch (const std::exception& ex) {
         std::cerr << "Error: " << ex.what() << std::endl;
-        outFile.close();
         return EXIT_FAILURE;
     }
-    
-    // Batch write configuration.
-    const size_t batchSize = 50000;
-    size_t count = 0;
-    std::string batchBuffer;
-    
-    // Wait for all tasks to complete and gather their output.
-    for (auto &future : futures) {
-        std::string jsonOutput = future.get();
-        if (!jsonOutput.empty()) {
-            batchBuffer.append(jsonOutput);
-            batchBuffer.push_back('\n');
-            count++;
-            if (count % batchSize == 0) {
-                outFile << batchBuffer;
-                batchBuffer.clear();
-            }
-        }
-    }
-    // Write any remaining output.
-    if (!batchBuffer.empty()) {
-        outFile << batchBuffer;
-    }
-    
+
+    writer.join();
+
     auto end = std::chrono::steady_clock::now();
-    std::cout << "Processing time: " 
+    std::cout << "Total processing time: " 
               << std::chrono::duration<double, std::milli>(end - start).count() / 1000 
               << " seconds" << std::endl;
-    
-    outFile.close();
-    return 0;
+    return EXIT_SUCCESS;
 }

@@ -20,49 +20,56 @@ bool PcapParser::readGlobalHeader() {
     if (!file_.read(reinterpret_cast<char*>(&header_), sizeof(PcapGlobalHeader))) {
         return false;
     }
-    
-    // const uint32_t magic_number = header_.magic_number;
-    // Check if the magic number is valid.
-    // if (magic_number != PCAP_MAGIC_NUMBER && magic_number == PCAP_MAGIC_NUMBER_SWAPPED) {
-    //     throw std::runtime_error("Invalid PCAP file format: Unknown magic number: " + std::to_string(magic_number));
-    // }
     return true;
 }
 
-bool PcapParser::readNextPacket(std::vector<uint8_t>& packetData) {
-    static char buff[IP_V4_BASE_HEADER_SIZE];
+bool PcapParser::readNextPacket(std::vector<uint8_t>&packetData) {
+    // Read the packet header.
     PcapPacketHeader packetHeader;
-    if (!file_.read(reinterpret_cast<char*>(&packetHeader), sizeof(PcapPacketHeader))) {
+    if (!file_.read(reinterpret_cast<char*>(&packetHeader), sizeof(packetHeader))) {
         return false;
     }
-    if (!file_.seekg(ETHERNET_HEADER_SIZE, std::ios::cur)){ // skip Ethernet header
-        return false;
-    }
-    if (!file_.read(buff, IP_V4_BASE_HEADER_SIZE)) {// read IPv4
-        return false;
-    }
-    uint8_t versionAndHeaderLength = uint8_t(buff[0]);
-    const uint8_t ihl = versionAndHeaderLength & 0x0F;    
-    const size_t ipHeaderSize = ihl * 4;
+    const size_t packetSize = packetHeader.incl_len;
 
-    if (const int extendedHeaderSize = static_cast<int>(ipHeaderSize - IP_V4_BASE_HEADER_SIZE); extendedHeaderSize > 0) {
-        if (!file_.seekg(ETHERNET_HEADER_SIZE, std::ios::cur)){ // skip extended IPv4 header
-            std::cerr << "Error reading extended IPv4 header.";
-            return false;
-        }
+    // Ensure our internal buffer is large enough.
+    if (buffer_.size() < packetSize) {
+        buffer_.resize(packetSize);
     }
-    if (!file_.seekg(UDP_HEADER_SIZE, std::ios::cur)){ // skip UDP header
+
+    // Read the whole packet at once.
+    if (!file_.read(reinterpret_cast<char*>(buffer_.data()), packetSize)) {
         return false;
     }
-    // Calculate the total length of headers
-    const size_t headersLength = ETHERNET_HEADER_SIZE + ipHeaderSize + UDP_HEADER_SIZE;
-    size_t payloadSize = packetHeader.incl_len - headersLength;
-    packetData = std::vector<uint8_t>(payloadSize, 0);
-    if (!file_.read(reinterpret_cast<char*>(packetData.data()), payloadSize)) {
+
+    // Calculate the offset to the payload.
+    size_t offset = 0;
+    offset += ETHERNET_HEADER_SIZE;
+
+    // Read IPv4 header information.
+    const uint8_t versionAndHeaderLength = buffer_[offset];
+    const uint8_t ihl = versionAndHeaderLength & 0x0F;
+    const size_t ipHeaderSize = ihl * 4;
+    offset += IP_V4_BASE_HEADER_SIZE;
+    if (ipHeaderSize > IP_V4_BASE_HEADER_SIZE) {
+        offset += (ipHeaderSize - IP_V4_BASE_HEADER_SIZE);
+    }
+    // offset += (ipHeaderSize > IP_V4_BASE_HEADER_SIZE) * (ipHeaderSize - IP_V4_BASE_HEADER_SIZE);
+
+
+    // Skip UDP header.
+    offset += UDP_HEADER_SIZE;
+
+    if (offset >= packetSize) {
+        std::cerr << "Invalid Packet: not enough data" << std::endl;
         return false;
     }
-    
+
+    // Compute payload size.
+    const size_t payloadSize = packetSize - offset;
+    packetData.resize(payloadSize);
+    std::memcpy(packetData.data(), &buffer_[offset], payloadSize);
     return true;
 }
+
 
 } // namespace parser

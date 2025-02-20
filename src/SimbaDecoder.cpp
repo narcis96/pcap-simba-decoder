@@ -21,7 +21,6 @@ bool SimbaDecoder::Decode() {
         if (!readFromBuffer(header))  {
             return false;
         }
-        // std::cout << header.schema_id << " " << header.template_id << std::endl;
         switch (header.template_id) {
             case OrderUpdate::TEMPLATE_ID: {        
                 if (!readFromBuffer(value_.orderUpdates.emplace_back())) {
